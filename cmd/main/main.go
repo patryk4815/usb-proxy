@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/patryk4815/usb-proxy/pkg/hostproxy"
+	"github.com/patryk4815/usb-proxy/pkg/rawproxy"
 	"log"
 	"time"
 )
@@ -8,19 +10,23 @@ import (
 func main() {
 	log.Println("start")
 
-	host := NewHost()
-	host.Open()
+	host := hostproxy.New()
 	defer host.Close()
+	host.Open()
 
-	raw := NewRawGadget()
-	host.lolRaw = raw
-	raw.lolHost = host
-	go raw._WorkerDo()
+	raw := rawproxy.New()
 	defer raw.Close()
+	raw.Open()
 
-	raw2 := &WrapperUsbRawControlIO{xRaw: raw}
-	go customCopy(raw2, host)
-	customCopy(host, raw2)
+	raw.SetHostProxy(host)
+	host.SetRawProxy(raw)
 
+	go raw.EP0Loop()
+
+	tunnelEp0 := &rawproxy.WrapperUsbRawControlIO{Self: raw}
+	go customCopy(tunnelEp0, host) // MAX COPY = PAGE_SIZE kernel
+	customCopy(host, tunnelEp0)
+
+	log.Println("finished click ctrl+c")
 	time.Sleep(time.Second * 600)
 }

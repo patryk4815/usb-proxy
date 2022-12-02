@@ -1,4 +1,4 @@
-package main
+package rawgadget
 
 import (
 	"reflect"
@@ -35,7 +35,7 @@ func _IO(t int, nr int) int {
 	return _IOC(_IOC_NONE, t, nr, 0)
 }
 
-func sizeOf(stru interface{}) int {
+func Sizeof(stru interface{}) int {
 	c := reflect.TypeOf(stru)
 	return int(c.Size())
 }

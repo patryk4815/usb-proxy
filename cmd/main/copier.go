@@ -7,7 +7,7 @@ import (
 
 func customCopy(dst io.Writer, src io.Reader) {
 	for {
-		buf := make([]byte, 1024)
+		buf := make([]byte, 4096) // PAGE_SIZE from raw-gadget
 		n, err := src.Read(buf)
 		if err != nil {
 			log.Printf("[panic] Read err=%#v\n", err)
