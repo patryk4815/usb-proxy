@@ -3,16 +3,12 @@ package rawproxy
 import (
 	"github.com/google/gousb"
 	_ "github.com/lunixbochs/struc"
+	"github.com/patryk4815/usb-proxy/pkg/ctxproxy"
 	"github.com/patryk4815/usb-proxy/pkg/rawgadget"
 	log "github.com/sirupsen/logrus"
 	"io"
 	"time"
 )
-
-type XX_RawReaderWriter struct {
-	ChDone chan error
-	Event  rawgadget.UsbEventCtrl
-}
 
 type XX_www struct {
 	otgDevice *rawgadget.XX_Raw
@@ -20,8 +16,8 @@ type XX_www struct {
 	pleaseStopEp0            bool
 	setConfigurationDoneOnce bool
 
-	chReader chan XX_RawReaderWriter
-	chWriter chan XX_RawReaderWriter
+	chDirOut chan ctxproxy.XX_RawReaderWriter
+	chDirIn  chan ctxproxy.XX_RawReaderWriter
 
 	hostDevice IHostDevice
 
@@ -37,8 +33,8 @@ func New() *XX_www {
 	www := &XX_www{
 		otgDevice: s,
 
-		chReader: make(chan XX_RawReaderWriter),
-		chWriter: make(chan XX_RawReaderWriter),
+		chDirOut: make(chan ctxproxy.XX_RawReaderWriter),
+		chDirIn:  make(chan ctxproxy.XX_RawReaderWriter),
 
 		endpointsInfo: make(map[gousb.EndpointAddress]gousb.EndpointDesc),
 	}
@@ -54,8 +50,8 @@ func (s *XX_www) Open(driver, device string) {
 	}
 }
 
-func (s *XX_www) GetChWriter() <-chan XX_RawReaderWriter {
-	return s.chWriter
+func (s *XX_www) GetChDirIN() <-chan ctxproxy.XX_RawReaderWriter {
+	return s.chDirIn
 }
 
 func (s *XX_www) Close() error {
@@ -212,27 +208,27 @@ func (s *XX_www) EP0Loop() error {
 		if event.RawEventType == rawgadget.USB_RAW_EVENT_CONTROL {
 			if event.Direction == rawgadget.USB_DIR_IN {
 				// write
-				ref := XX_RawReaderWriter{
+				ref := ctxproxy.XX_RawReaderWriter{
 					ChDone: make(chan error, 1),
 					Event:  event,
 				}
-				s.chWriter <- ref
+				s.chDirIn <- ref
 				err := <-ref.ChDone
 				if err != nil {
-					log.Warning("Ep0Stall_TMP write")
-					//s.otgDevice.Ep0Stall() // TODO: err
+					log.Warning("Ep0Stall TODO Stall? write")
+					//s.otgDevice.Ep0Stall() // TODO: ?
 				}
 			} else {
 				// read
-				ref := XX_RawReaderWriter{
+				ref := ctxproxy.XX_RawReaderWriter{
 					ChDone: make(chan error, 1),
 					Event:  event,
 				}
-				s.chReader <- ref
+				s.chDirOut <- ref
 				err := <-ref.ChDone
 				if err != nil {
-					log.Warning("Ep0Stall_TMP read")
-					//s.otgDevice.Ep0Stall() // TODO: err
+					log.Warning("Ep0Stall TODO Stall? read")
+					//s.otgDevice.Ep0Stall() // TODO: ?
 				}
 			}
 		}
@@ -243,23 +239,30 @@ func (s *XX_www) EP0Loop() error {
 func (s *XX_www) _EpLoopRead(in *gousb.InEndpoint, epNum int) error {
 	log.Println("_EpLoopRead")
 	writer := &WrapperUsbEPX{Self: s, EpNum: epNum}
-	_ = writer
+	reader := &WrapperHostUsbEPX{
+		EpNum:     epNum,
+		ObjReader: in,
+	}
 
 	for {
 		buf := make([]byte, in.Desc.MaxPacketSize)
-		n, err := in.Read(buf)
+		nr, err := reader.Read(buf)
 		if err != nil {
 			log.WithError(err).WithField("PollInterval", in.Desc.PollInterval).Warning("sleeping err read _EpLoopRead")
 			time.Sleep(in.Desc.PollInterval)
 			continue
 		}
-		buf = buf[:n]
+		buf = buf[:nr]
 
-		_, err = writer.Write(buf)
+		nw, err := writer.Write(buf)
 		if err != nil {
 			log.WithError(err).WithField("PollInterval", in.Desc.PollInterval).Warning("sleeping err write _EpLoopRead")
 			time.Sleep(in.Desc.PollInterval)
 			continue
+		}
+
+		if nr != nw {
+			log.WithField("nr", nr).WithField("nw", nw).Errorf("_EpLoopRead WTF size not match")
 		}
 	}
 
@@ -269,23 +272,29 @@ func (s *XX_www) _EpLoopRead(in *gousb.InEndpoint, epNum int) error {
 func (s *XX_www) _EpLoopWrite(out *gousb.OutEndpoint, epNum int) error {
 	log.Println("_EpLoopWrite")
 	reader := &WrapperUsbEPX{Self: s, EpNum: epNum}
-	_ = reader
+	writer := &WrapperHostUsbEPX{
+		EpNum:     epNum,
+		ObjWriter: out,
+	}
 
 	for {
 		buf := make([]byte, out.Desc.MaxPacketSize)
-		n, err := reader.Read(buf)
+		nr, err := reader.Read(buf)
 		if err != nil {
 			log.WithError(err).WithField("PollInterval", out.Desc.PollInterval).Warning("sleeping err read _EpLoopWrite")
 			time.Sleep(out.Desc.PollInterval)
 			continue
 		}
-		buf = buf[:n]
+		buf = buf[:nr]
 
-		_, err = out.Write(buf)
+		nw, err := writer.Write(buf)
 		if err != nil {
 			log.WithError(err).WithField("PollInterval", out.Desc.PollInterval).Warning("sleeping err write _EpLoopWrite")
 			time.Sleep(out.Desc.PollInterval)
 			continue
+		}
+		if nr != nw {
+			log.WithField("nr", nr).WithField("nw", nw).Errorf("_EpLoopWrite WTF size not match")
 		}
 	}
 

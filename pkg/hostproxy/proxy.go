@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/google/gousb"
 	"github.com/patryk4815/usb-proxy/pkg/ctxproxy"
-	"github.com/patryk4815/usb-proxy/pkg/rawproxy"
 	log "github.com/sirupsen/logrus"
 	"io"
 	"time"
@@ -26,7 +25,7 @@ func New() *XX_Host {
 }
 
 type IRawDevice interface {
-	GetChWriter() <-chan rawproxy.XX_RawReaderWriter
+	GetChDirIN() <-chan ctxproxy.XX_RawReaderWriter
 }
 
 func (s *XX_Host) SetRawProxy(h IRawDevice) {
@@ -35,7 +34,7 @@ func (s *XX_Host) SetRawProxy(h IRawDevice) {
 
 func (s *XX_Host) ReadContext(ctx context.Context, output []byte) (int, error) {
 	var readed int
-	event := <-s.rawDevice.GetChWriter()
+	event := <-s.rawDevice.GetChDirIN()
 	if info := ctxproxy.CtxEP0Data(ctx); info != nil {
 		info.Event = event.Event
 		info.Close = func(err error) {
@@ -43,9 +42,9 @@ func (s *XX_Host) ReadContext(ctx context.Context, output []byte) (int, error) {
 		}
 	}
 
-	log.WithField("bytes", event.Event.RawCtrlReq.WLength).Debug("ep0: IN(raw) copying bytes")
+	log.WithField("bytes", event.Event.RawCtrlReq.WLength).Debug("ep0: IN(host) copying bytes")
 	defer func() {
-		log.WithField("bytes", readed).WithField("input", event.Event.RawCtrlReq.WLength).Debug("ep0: IN(raw) transferred bytes")
+		log.WithField("bytes", readed).WithField("input", event.Event.RawCtrlReq.WLength).Debug("ep0: IN(host) transferred bytes")
 	}()
 
 	if len(output) < int(event.Event.RawCtrlReq.WLength) {

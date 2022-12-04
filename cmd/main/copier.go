@@ -26,19 +26,23 @@ func customCopySingle(dst WriterCtx, src ReaderCtx) {
 	ctx := ctxproxy.NewCtxEP0Data(context.Background(), ctxInfo)
 
 	buf := make([]byte, rawgadget.PAGE_SIZE)
-	n, err := src.ReadContext(ctx, buf)
+	nr, err := src.ReadContext(ctx, buf)
 	if err != nil {
 		log.WithError(err).Errorf("[panic] Read err=%#v\n", err)
 		ctxInfo.Close(err)
 		return
 	}
-	buf = buf[:n]
+	buf = buf[:nr]
 
-	_, err = dst.WriteContext(ctx, buf)
+	nw, err := dst.WriteContext(ctx, buf)
 	if err != nil {
 		log.WithError(err).Errorf("[panic] Write err=%#v\n", err)
 		ctxInfo.Close(err)
 		return
+	}
+
+	if nr != nw {
+		log.WithField("nr", nr).WithField("nw", nw).Errorf("customCopySingle WTF size not match")
 	}
 
 	ctxInfo.Close(nil)

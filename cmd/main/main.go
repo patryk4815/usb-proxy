@@ -7,7 +7,6 @@ import (
 	"github.com/patryk4815/usb-proxy/pkg/hostproxy"
 	"github.com/patryk4815/usb-proxy/pkg/rawproxy"
 	log "github.com/sirupsen/logrus"
-	"runtime"
 	"strconv"
 	"time"
 )
@@ -49,21 +48,20 @@ func main() {
 	vendorId := parseVendorIDOrProductID(*vendorIdStr)
 	productId := parseVendorIDOrProductID(*productIdStr)
 
-	runtime.LockOSThread() // just in case
-
 	log.SetLevel(log.DebugLevel) // TODO: control from cli
 	log.Println("start")
 
 	host := hostproxy.New()
 	defer host.Close()
-	host.Open(gousb.ID(vendorId), gousb.ID(productId))
 
 	raw := rawproxy.New()
 	defer raw.Close()
-	raw.Open(*driver, *device)
 
 	raw.SetHostProxy(host)
 	host.SetRawProxy(raw)
+
+	host.Open(gousb.ID(vendorId), gousb.ID(productId))
+	raw.Open(*driver, *device)
 
 	go raw.EP0Loop()
 

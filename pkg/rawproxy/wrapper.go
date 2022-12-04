@@ -7,6 +7,7 @@ import (
 	"github.com/patryk4815/usb-proxy/pkg/ctxproxy"
 	"github.com/patryk4815/usb-proxy/pkg/rawgadget"
 	log "github.com/sirupsen/logrus"
+	"io"
 )
 
 type WrapperUsbEP0 struct {
@@ -15,7 +16,7 @@ type WrapperUsbEP0 struct {
 
 func (s *WrapperUsbEP0) ReadContext(ctx context.Context, output []byte) (int, error) {
 	var readed int
-	event := <-s.Self.chReader
+	event := <-s.Self.chDirOut
 
 	log.WithField("bytes", event.Event.RawCtrlReq.WLength).Debug("ep0: IN(raw) copying bytes")
 	defer func() {
@@ -82,12 +83,12 @@ func (s *WrapperUsbEPX) Read(input []byte) (int, error) {
 	pkt.Ep = uint16(s.EpNum)
 	pkt.Data = make([]byte, len(input))
 
-	log.WithField("bytes", len(input)).WithField("ep", pkt.Ep).Debug("epX: IN(raw) copying bytes")
+	log.WithField("bytes", len(input)).WithField("ep", pkt.Ep).Debugf("ep%d: IN(raw) copying bytes", s.EpNum)
 	defer func() {
 		logger := log.WithField("bytes", readed).WithField("input", len(input)).WithField("ep", pkt.Ep)
 		logger = logger.WithField("whole_r", float64(s.ReadedBytes)/1024/1024)
-		logger = logger.WithField("buf", input)
-		logger.Debug("epX: IN(raw) transferred bytes")
+		logger = logger.WithField("buf", input[:readed])
+		logger.Debugf("ep%d: IN(raw) transferred bytes", s.EpNum)
 	}()
 
 	n, err := s.Self.otgDevice.EPRead(pkt)
@@ -112,15 +113,64 @@ func (s *WrapperUsbEPX) Write(input []byte) (int, error) {
 	logger := log.WithField("bytes", len(input)).WithField("ep", pkt.Ep)
 	logger = logger.WithField("whole_w", float64(s.WritedBytes)/1024/1024)
 	logger = logger.WithField("buf", input)
-	logger.Debug("epX: OUT(raw) writing bytes")
+	logger.Debugf("ep%d: OUT(raw) writing bytes", s.EpNum)
 	defer func() {
-		log.WithField("bytes", readed).WithField("input", len(input)).WithField("ep", pkt.Ep).Debug("epX: OUT(raw) transferred bytes")
+		log.WithField("bytes", readed).WithField("input", len(input)).WithField("ep", pkt.Ep).Debugf("ep%d: OUT(raw) transferred bytes", s.EpNum)
 	}()
 
 	n, err := s.Self.otgDevice.EPWrite(pkt)
 	readed = n
 	if n < 0 && err == nil {
 		return 0, fmt.Errorf("WrapperUsbEPX Write control minus value = %d", n)
+	}
+	s.WritedBytes += n
+
+	return n, err
+}
+
+type WrapperHostUsbEPX struct {
+	ObjReader   interface{ io.Reader }
+	ObjWriter   interface{ io.Writer }
+	EpNum       int
+	ReadedBytes int
+	WritedBytes int
+}
+
+func (s *WrapperHostUsbEPX) Read(input []byte) (int, error) {
+	var readed int
+	log.WithField("bytes", len(input)).WithField("ep", s.EpNum).Debugf("ep%d: IN(host) copying bytes", s.EpNum)
+	defer func() {
+		logger := log.WithField("bytes", readed).WithField("input", len(input)).WithField("ep", s.EpNum)
+		logger = logger.WithField("whole_r", float64(s.ReadedBytes)/1024/1024)
+		logger = logger.WithField("buf", input[:readed])
+		logger.Debugf("ep%d: IN(host) transferred bytes", s.EpNum)
+	}()
+
+	n, err := s.ObjReader.Read(input)
+	readed = n
+	if n < 0 && err == nil {
+		return 0, fmt.Errorf("WrapperHostUsbEPX Read control minus value = %d", n)
+	}
+	if n >= 0 {
+		s.ReadedBytes += n
+	}
+	return n, err
+}
+
+func (s *WrapperHostUsbEPX) Write(input []byte) (int, error) {
+	var readed int
+	logger := log.WithField("bytes", len(input)).WithField("ep", s.EpNum)
+	logger = logger.WithField("whole_w", float64(s.WritedBytes)/1024/1024)
+	logger = logger.WithField("buf", input)
+	logger.Debugf("ep%d: OUT(host) writing bytes", s.EpNum)
+	defer func() {
+		log.WithField("bytes", readed).WithField("input", len(input)).WithField("ep", s.EpNum).Debugf("ep%d: OUT(host) transferred bytes", s.EpNum)
+	}()
+
+	n, err := s.ObjWriter.Write(input)
+	readed = n
+	if n < 0 && err == nil {
+		return 0, fmt.Errorf("WrapperHostUsbEPX Write control minus value = %d", n)
 	}
 	s.WritedBytes += n
 
