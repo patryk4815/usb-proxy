@@ -1,24 +1,45 @@
 package main
 
 import (
-	"io"
-	"log"
+	"context"
+	"github.com/patryk4815/usb-proxy/pkg/ctxproxy"
+	"github.com/patryk4815/usb-proxy/pkg/rawgadget"
+	log "github.com/sirupsen/logrus"
 )
 
-func customCopy(dst io.Writer, src io.Reader) {
-	for {
-		buf := make([]byte, 4096) // PAGE_SIZE from raw-gadget
-		n, err := src.Read(buf)
-		if err != nil {
-			log.Printf("[panic] Read err=%#v\n", err)
-			panic(err)
-		}
-		buf = buf[:n]
+type ReaderCtx interface {
+	ReadContext(ctx context.Context, p []byte) (n int, err error)
+}
 
-		_, err = dst.Write(buf)
-		if err != nil {
-			log.Printf("[panic] Write err=%#v\n", err)
-			panic(err)
-		}
+type WriterCtx interface {
+	WriteContext(ctx context.Context, p []byte) (n int, err error)
+}
+
+func customCopy(dst WriterCtx, src ReaderCtx) {
+	for {
+		customCopySingle(dst, src)
 	}
+}
+
+func customCopySingle(dst WriterCtx, src ReaderCtx) {
+	ctxInfo := &ctxproxy.InfoCtxEP0Data{}
+	ctx := ctxproxy.NewCtxEP0Data(context.Background(), ctxInfo)
+
+	buf := make([]byte, rawgadget.PAGE_SIZE)
+	n, err := src.ReadContext(ctx, buf)
+	if err != nil {
+		log.WithError(err).Errorf("[panic] Read err=%#v\n", err)
+		ctxInfo.Close(err)
+		return
+	}
+	buf = buf[:n]
+
+	_, err = dst.WriteContext(ctx, buf)
+	if err != nil {
+		log.WithError(err).Errorf("[panic] Write err=%#v\n", err)
+		ctxInfo.Close(err)
+		return
+	}
+
+	ctxInfo.Close(nil)
 }

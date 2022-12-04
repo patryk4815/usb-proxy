@@ -10,7 +10,9 @@ pkgs.buildGoModule {
   nativeBuildInputs = [ pkgs.pkgconfig ];
   buildInputs = [ pkgs.libusb ];
 
-  vendorSha256 = "sha256-fSxtM+c6rkpKXALdaeMx3+gvAjtG2+mq0c+c9SvYzXY=";
+#  vendorSha256 = "sha256-fSxtM+c6rkpKXALdaeMx3+gvAjtG2+mq0c+c9SvYzXY=";
+#  vendorSha256 = pkgs.lib.fakeHash;
+  vendorSha256 = "sha256-H5gbVcQdF5dgtaoLZ3DQJnUAmjjEXAqDLDm6GeNr/mw=";
 
   subPackages = [ "cmd/main" ];
 

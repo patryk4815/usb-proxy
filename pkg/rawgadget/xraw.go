@@ -5,7 +5,7 @@ import (
 	"errors"
 	"github.com/google/gousb"
 	"github.com/lunixbochs/struc"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"syscall"
 	"unsafe"
 )
@@ -20,7 +20,7 @@ func NewRawGadget() *XX_Raw {
 
 func (s *XX_Raw) ioctlPtr(req int, ptr unsafe.Pointer) (r1, r2 uintptr, err error) {
 	r1, r2, errno := ioctlPtr(s.fd, req, ptr)
-	log.Printf("ioctlPtr: r1=%x, r2=%x, errno=%v\n", r1, r2, errno)
+	log.Debugf("ioctlPtr: req=0x%x r1=0x%x, r2=0x%x, errno=%v\n", req, r1, r2, errno)
 	if errno > 0 {
 		return r1, r2, errno
 	}
@@ -29,7 +29,7 @@ func (s *XX_Raw) ioctlPtr(req int, ptr unsafe.Pointer) (r1, r2 uintptr, err erro
 
 func (s *XX_Raw) ioctlInt(req int, val uintptr) (r1, r2 uintptr, err error) {
 	r1, r2, errno := ioctlInt(s.fd, req, val)
-	log.Printf("ioctlInt: r1=%x, r2=%x, errno=%v\n", r1, r2, errno)
+	log.Debugf("ioctlInt: req=0x%x r1=0x%x, r2=0x%x, errno=%v\n", req, r1, r2, errno)
 	if errno > 0 {
 		return r1, r2, errno
 	}
@@ -37,7 +37,6 @@ func (s *XX_Raw) ioctlInt(req int, val uintptr) (r1, r2 uintptr, err error) {
 }
 
 func (s *XX_Raw) Open() error {
-	// TODO: custom name
 	fd, err := syscall.Open("/dev/raw-gadget", syscall.O_RDWR, 0666)
 	if err != nil {
 		return err
@@ -89,14 +88,10 @@ func (s *XX_Raw) EventFetch(ev *Usb_raw_event) (int, error) {
 		return 0, err
 	}
 
-	log.Printf("USB_RAW_IOCTL_EVENT_FETCH in: %#v\n", in)
-	log.Printf("USB_RAW_IOCTL_EVENT_FETCH pre: %q\n", buf.Bytes())
-
 	_, _, err = s.ioctlPtr(USB_RAW_IOCTL_EVENT_FETCH, unsafe.Pointer(&(buf.Bytes()[0])))
 	if err != nil {
 		return 0, err
 	}
-	log.Printf("USB_RAW_IOCTL_EVENT_FETCH post: %q\n", buf.Bytes())
 
 	out := &_packer_Usb_raw_event{}
 	err = struc.Unpack(buf, out)
@@ -106,7 +101,6 @@ func (s *XX_Raw) EventFetch(ev *Usb_raw_event) (int, error) {
 
 	ev.Type = Usb_raw_event_type(out.Type)
 	ev.Data = append(ev.Data[:0], out.Data...) // hack
-	log.Printf("Usb_raw_event post: %#v\n", ev)
 
 	n := int(out.Length)
 	return n, nil
@@ -259,11 +253,11 @@ func (s *XX_Raw) DebugShowEps() error {
 		caps := info.Caps.GetType()
 		log.Printf("Ep #%d:"+
 			"  Name: %s"+
-			"  Addr: %x"+
+			"  Addr: 0x%x"+
 			"  type: iso=%v bulk=%v int=%v"+
 			"  dir: in=%v out=%v"+
-			"  Maxpacket_limit: %x"+
-			"  Max_streams: %x\n",
+			"  Maxpacket_limit: %d"+
+			"  Max_streams: %d\n",
 			i,
 			info.Name,
 			info.Addr,

@@ -1,10 +1,14 @@
 package hostproxy
 
 import (
+	"context"
+	"fmt"
 	"github.com/google/gousb"
+	"github.com/patryk4815/usb-proxy/pkg/ctxproxy"
 	"github.com/patryk4815/usb-proxy/pkg/rawproxy"
+	log "github.com/sirupsen/logrus"
 	"io"
-	"log"
+	"time"
 )
 
 type XX_Host struct {
@@ -23,61 +27,65 @@ func New() *XX_Host {
 
 type IRawDevice interface {
 	GetChWriter() <-chan rawproxy.XX_RawReaderWriter
-	GetLastEvent() rawproxy.UsbEventCtrl
 }
 
 func (s *XX_Host) SetRawProxy(h IRawDevice) {
 	s.rawDevice = h
 }
 
-func (s *XX_Host) Read(output []byte) (int, error) {
-	defer func() {
-		log.Printf("XX_Host Read-End\n")
-	}()
+func (s *XX_Host) ReadContext(ctx context.Context, output []byte) (int, error) {
+	var readed int
 	event := <-s.rawDevice.GetChWriter()
-	eventData := event.Event
-	log.Printf("XX_Host Read: len=%d, %+v\n", len(output), eventData)
-	defer close(event.ChDone)
-
-	out := make([]byte, eventData.RawCtrlReq.WLength) // TODO: output len???? WTF, moze jednak nie
-	n, err := s.Dev.Control(eventData.RawCtrlReq.BRequestType, eventData.RawCtrlReq.BRequest, eventData.RawCtrlReq.WValue, eventData.RawCtrlReq.WIndex, out)
-
-	log.Printf("XX_Host Read-result n=%d, err=%#v\n", n, err)
-	if n <= 0 {
-		panic(err)
-		return n, err
+	if info := ctxproxy.CtxEP0Data(ctx); info != nil {
+		info.Event = event.Event
+		info.Close = func(err error) {
+			event.ChDone <- err
+		}
 	}
-	copy(output, out)
 
-	log.Printf("[dump] readHost: info=%+v data=%q\n", eventData, out[:n])
+	log.WithField("bytes", event.Event.RawCtrlReq.WLength).Debug("ep0: IN(raw) copying bytes")
+	defer func() {
+		log.WithField("bytes", readed).WithField("input", event.Event.RawCtrlReq.WLength).Debug("ep0: IN(raw) transferred bytes")
+	}()
 
-	return n, nil
+	if len(output) < int(event.Event.RawCtrlReq.WLength) {
+		err := fmt.Errorf("output short len has=%d needed=%d", len(output), event.Event.RawCtrlReq.WLength)
+		panic(err)
+	}
+
+	out := make([]byte, event.Event.RawCtrlReq.WLength)
+	n, err := s.Dev.Control(event.Event.RawCtrlReq.BRequestType, event.Event.RawCtrlReq.BRequest, event.Event.RawCtrlReq.WValue, event.Event.RawCtrlReq.WIndex, out)
+	readed = n
+	if n < 0 && err == nil {
+		return 0, fmt.Errorf("ReadContext control minus value = %d", n)
+	}
+	if n >= 0 {
+		copy(output, out[:n])
+	}
+	return n, err // TODO: wrap error
 }
 
-func (s *XX_Host) Write(input []byte) (int, error) {
+func (s *XX_Host) WriteContext(ctx context.Context, input []byte) (int, error) {
+	var readed int
+	info := ctxproxy.CtxEP0Data(ctx)
+	if info == nil {
+		panic(fmt.Errorf("context should have info"))
+	}
+
+	log.WithField("bytes", len(input)).Debug("ep0: OUT(host) writing bytes")
 	defer func() {
-		log.Printf("XX_Host Write-End\n")
+		log.WithField("bytes", readed).WithField("input", len(input)).Debug("ep0: OUT(host) transferred bytes")
 	}()
 
-	eventData := s.rawDevice.GetLastEvent()
-	log.Printf("XX_Host Write: len=%d cap=%d %+v\n", len(input), cap(input), eventData)
-
-	// TODO: ogarnac ten length tutaj
-	//out := make([]byte, eventData.RawCtrlReq.WLength)
-	//nwrited := copy(out, input)
-	//_ = nwrited
 	out := make([]byte, len(input))
 	copy(out, input)
 
-	n, err := s.Dev.Control(eventData.RawCtrlReq.BRequestType, eventData.RawCtrlReq.BRequest, eventData.RawCtrlReq.WValue, eventData.RawCtrlReq.WIndex, out)
-	log.Printf("XX_Host Write-result n=%d, err=%#v\n", n, err)
-
-	if n < 0 {
-		panic(err)
-		return n, err
+	n, err := s.Dev.Control(info.Event.RawCtrlReq.BRequestType, info.Event.RawCtrlReq.BRequest, info.Event.RawCtrlReq.WValue, info.Event.RawCtrlReq.WIndex, out)
+	readed = n
+	if n < 0 && err == nil {
+		return 0, fmt.Errorf("WriteContext control minus value = %d", n)
 	}
-
-	return n, nil
+	return n, err // TODO: wrap error
 }
 
 func (s *XX_Host) GetConfig(wValue uint16) (*gousb.Config, error) {
@@ -89,32 +97,15 @@ func (s *XX_Host) Close() {
 	s.ctx.Close()
 }
 
-func (s *XX_Host) Open() {
+func (s *XX_Host) Open(vid, pid gousb.ID) {
 	ctx := gousb.NewContext()
 	s.ctx = ctx
 
-	// TODO: select device
 	// TODO: auto select when usb plug-in?
 
-	// 1038:160e
-	// 090c:1000
-	// 0930:6544
-
-	//2022/12/02 02:55:22 Scan OpenDevices: 1.1: 1d6b:0002 (available configs: [1])
-	//2022/12/02 02:55:22 Scan OpenDevices: 3.1: 1d6b:0003 (available configs: [1])
-	//2022/12/02 02:55:22 Scan OpenDevices: 2.4: 0930:6544 (available configs: [1])
-	//2022/12/02 02:55:22 Scan OpenDevices: 2.2: 2109:3431 (available configs: [1])
-	//2022/12/02 02:55:22 Scan OpenDevices: 2.1: 1d6b:0002 (available configs: [1])
-
-	vid, pid := gousb.ID(0x0930), gousb.ID(0x6544) //bialy
-	//vid, pid := gousb.ID(0x090c), gousb.ID(0x1000) // z rzadu
-	//vid, pid := gousb.ID(0x04e8), gousb.ID(0x60b3)
-	//vid, pid := gousb.ID(0x090c), gousb.ID(0x1000)
-	//vid, pid := gousb.ID(0x1038), gousb.ID(0x160e)
 	devs, err := ctx.OpenDevices(func(desc *gousb.DeviceDesc) bool {
 		log.Printf("Scan OpenDevices: %s\n", desc.String())
 		return desc.Vendor == vid && desc.Product == pid
-		//return desc.Bus == 2 && desc.Address == 4
 	})
 
 	if err != nil {
@@ -125,17 +116,11 @@ func (s *XX_Host) Open() {
 	}
 
 	dev := devs[0]
-	//{
-	//	out, _ := Dev.Product()
-	//	log.Printf("Product: %s\n", out)
-	//}
-
 	{
 		err := dev.SetAutoDetach(true)
 		log.Printf("SetAutoDetach: %#v\n", err)
 
 	}
-
 	{
 		err := dev.Reset()
 		log.Printf("Reset: %#v\n", err)
@@ -147,5 +132,5 @@ func (s *XX_Host) Open() {
 	}
 
 	s.Dev = dev
-	//s.Dev.ControlTimeout = time.Second
+	s.Dev.ControlTimeout = time.Second * 999
 }
